@@ -1,0 +1,6 @@
+{
+  "name": "Boon Huat Accounts Payable AI Assistant",
+  "description": "An AI-powered 3-Way Matching application for Accounts Payable, designed for Accounts Executive Madam Lim to compare Purchase Orders, Goods Received Notes, and Supplier Invoices.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
