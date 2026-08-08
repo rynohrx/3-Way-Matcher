@@ -24,6 +24,7 @@ export interface GoodsReceivedNote {
 export interface SupplierInvoice {
   id: string; // Invoice Number
   invoiceDate: string;
+  dueDate?: string; // Payment Due Date from supplier invoice
   supplierName: string;
   poNumber?: string;
   itemDescription: string;

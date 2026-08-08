@@ -36,6 +36,7 @@ import {
 import { GoogleSheetsDb } from './db-mock';
 import { runThreeWayMatch, cleanNum, parseExcelDateOrString, compareSupplierNames, resolveQtyAndPrice } from './backend-matcher';
 import * as XLSX from 'xlsx';
+import { GoogleSheetsModal } from './components/GoogleSheetsModal';
 
 // Sanitize database state to filter out header rows (e.g. PO-PO NUMBER) and duplicate IDs
 function sanitizeDb(db: GoogleSheetsDb): GoogleSheetsDb {
@@ -299,6 +300,7 @@ export default function App() {
   const [showGrnModal, setShowGrnModal] = useState<boolean>(false);
   const [showBatchModal, setShowBatchModal] = useState<boolean>(false);
   const [showClearModal, setShowClearModal] = useState<boolean>(false);
+  const [showGoogleSheetsModal, setShowGoogleSheetsModal] = useState<boolean>(false);
   const [batchRawText, setBatchRawText] = useState<string>("");
 
   // New PO Form State
@@ -667,6 +669,7 @@ Singapore`;
         const rawInvId = findVal(['invoicenumber', 'invoiceno', 'invoiceid', 'invno', 'invoicenum', 'billno', 'billnumber', 'billid', 'invnumber', 'docno', 'voucherno', 'invoice', 'inv', 'id', 'no', 'number', 'ref']);
         const rawSupplier = findVal(['suppliername', 'supplier', 'vendorname', 'vendor', 'companyname', 'company', 'biller', 'merchant', 'issuer', 'from', 'name']);
         const rawDate = findVal(['invoicedate', 'date', 'billdate', 'createddate', 'issuedate', 'invdate']);
+        const rawDueDate = findVal(['duedate', 'paymentduedate', 'due', 'expiry', 'expdate', 'payby', 'paydate', 'paymentdue', 'termsdate', 'dueon']);
         const rawPoRef = findVal(['ponumber', 'poid', 'pono', 'poref', 'purchasenumber', 'po#', 'purchaseorder', 'po']);
         const rawDesc = findVal(['itemdescription', 'itemdesc', 'description', 'item', 'product', 'goods', 'particulars', 'details', 'descriptionofgoods', 'service', 'material']);
         const rawQty = findVal(['quantitybilled', 'quantityordered', 'billedqty', 'quantity', 'qty', 'units', 'count', 'pcs']);
@@ -698,10 +701,13 @@ Singapore`;
 
           if (totalAmount > 0 || unitPrice > 0 || (rawDesc && String(rawDesc).trim() !== '')) {
             if (!extracted.some(i => i.id === invIdStr)) {
+              const parsedInvDate = parseExcelDateOrString(rawDate);
+              const parsedDueDate = rawDueDate ? parseExcelDateOrString(rawDueDate) : undefined;
               extracted.push({
                 id: invIdStr,
                 supplierName: String(rawSupplier || 'Hardware Supplier').trim(),
-                invoiceDate: parseExcelDateOrString(rawDate),
+                invoiceDate: parsedInvDate,
+                dueDate: parsedDueDate,
                 poNumber: poRefStr || undefined,
                 itemDescription: String(rawDesc || 'Hardware Materials').trim(),
                 quantityBilled: qty || 1,
@@ -973,6 +979,41 @@ Singapore`;
       const elem = document.getElementById('invoice-audit-section');
       if (elem) elem.scrollIntoView({ behavior: 'smooth' });
     }, 100);
+  };
+
+  // Import and audit invoices from Google Sheets 2D cell array
+  const handleGoogleSheetsImport = (rows2D: any[][], fileName: string) => {
+    if (!rows2D || rows2D.length === 0) return;
+    setLoading(true);
+    setActionStatus(null);
+    setUploadProgress(`Processing Google Sheet "${fileName}"...`);
+
+    try {
+      const sheet = XLSX.utils.aoa_to_sheet(rows2D);
+      const parsedInvs = parseInvoicesFromExcelSheet(sheet);
+
+      if (parsedInvs.length === 0) {
+        alert(`No valid supplier invoice records could be detected in Google Sheet "${fileName}". Please ensure your sheet contains headers like Invoice ID, Supplier Name, and Total Amount.`);
+        setLoading(false);
+        setUploadProgress(null);
+        return;
+      }
+
+      updateAuditedList(parsedInvs);
+      setDbTab('audited');
+      setLoading(false);
+      setUploadProgress(null);
+
+      setTimeout(() => {
+        const elem = document.getElementById('invoice-audit-section');
+        if (elem) elem.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    } catch (err) {
+      console.error("Error importing Google Sheet:", err);
+      alert("Failed to parse invoice data from Google Sheet.");
+      setLoading(false);
+      setUploadProgress(null);
+    }
   };
 
   // Upload PO or GRN document into the database
@@ -1580,6 +1621,11 @@ Singapore`;
     } catch (e) {
       console.error("Failed to update database:", e);
     }
+
+    // Trigger Google Sheets Export modal after approval
+    setTimeout(() => {
+      setShowGoogleSheetsModal(true);
+    }, 300);
   };
 
   const handleReject = () => {
@@ -2163,9 +2209,9 @@ Tel: +65 6748 1122`;
 
           <div className="p-5 space-y-6">
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               
-              {/* File Uploader supporting Excel, Google Sheets CSV, PDFs, Images, JSON */}
+              {/* File Uploader supporting Excel, CSV, PDFs, Images, JSON */}
               <div className="border-2 border-dashed border-indigo-300 rounded-lg p-5 bg-indigo-50/30 hover:bg-indigo-50/60 text-center transition-all relative flex flex-col items-center justify-center group">
                 <input 
                   type="file" 
@@ -2181,19 +2227,44 @@ Tel: +65 6748 1122`;
                   </div>
                   <div>
                     <p className="font-bold text-sm text-slate-900">
-                      Upload Supplier Invoices (Excel .xlsx / Google Sheets / Multi-Files)
+                      Upload Supplier Invoice Files
                     </p>
-                    <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                      Upload an Excel spreadsheet containing a batch of invoices, Google Sheets export, or select multiple invoice files. AI cross-audits every record against the PO & GRN database.
+                    <p className="text-xs text-slate-500 max-w-xs mx-auto mt-1">
+                      Upload Excel (.xlsx), CSV, PDFs, images or JSON invoice batches.
                     </p>
                   </div>
                   <div className="pt-1">
                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-700 bg-indigo-100/80 px-3 py-1 rounded-full border border-indigo-200">
                       <FileSpreadsheet className="w-3.5 h-3.5" />
-                      Select Excel Sheet or Invoice Files
+                      Select Excel or PDF Files
                     </span>
                   </div>
                 </div>
+              </div>
+
+              {/* Google Sheets Direct Sync & Import Card */}
+              <div className="border-2 border-dashed border-emerald-400 rounded-lg p-5 bg-emerald-50/40 hover:bg-emerald-50/80 text-center transition-all flex flex-col items-center justify-between group relative">
+                <div className="space-y-2 flex flex-col items-center">
+                  <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 border border-emerald-300 shadow-xs group-hover:scale-105 transition-transform">
+                    <FileSpreadsheet className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <p className="font-bold text-sm text-slate-900">Google Sheets Integration</p>
+                      <span className="text-[10px] bg-emerald-600 text-white font-bold px-1.5 py-0.2 rounded">LIVE</span>
+                    </div>
+                    <p className="text-xs text-slate-500 max-w-xs mx-auto mt-1">
+                      Import invoice spreadsheets directly from Google Drive or export audit reports to Google Sheets.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowGoogleSheetsModal(true)}
+                  className="mt-3 text-xs font-bold py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg shadow-sm flex items-center justify-center gap-2 transition-all w-full"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  Open Google Sheets Sync
+                </button>
               </div>
 
               {/* Manual Form Trigger */}
@@ -2232,8 +2303,15 @@ Tel: +65 6748 1122`;
                     </p>
                   </div>
 
-                  {/* Summary Pills */}
+                  {/* Summary Pills & Export Button */}
                   <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+                    <button
+                      onClick={() => setShowGoogleSheetsModal(true)}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500 px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors shadow-xs"
+                    >
+                      <FileSpreadsheet className="w-4 h-4 text-white" />
+                      <span>Export to Google Sheets</span>
+                    </button>
                     <div className="bg-emerald-950/80 text-emerald-300 border border-emerald-800 px-3 py-1.5 rounded flex items-center gap-1.5">
                       <CheckCircle className="w-4 h-4 text-emerald-400" />
                       <span>ACCEPT & PAY: {auditedInvoices.filter(i => i.recommendation === 'ACCEPT').length}</span>
@@ -2429,6 +2507,16 @@ Tel: +65 6748 1122`;
                       type="date" 
                       value={manualInvoice.invoiceDate} 
                       onChange={e => setManualInvoice({...manualInvoice, invoiceDate: e.target.value})}
+                      className="w-full p-2 bg-white border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 uppercase font-semibold block mb-1">Payment Due Date</label>
+                    <input 
+                      type="date" 
+                      value={manualInvoice.dueDate || ''} 
+                      placeholder="e.g. 2026-09-06"
+                      onChange={e => setManualInvoice({...manualInvoice, dueDate: e.target.value})}
                       className="w-full p-2 bg-white border border-slate-300 rounded focus:ring-1 focus:ring-indigo-500 outline-none"
                     />
                   </div>
@@ -2656,14 +2744,20 @@ Tel: +65 6748 1122`;
                     </div>
                   )}
                   
-                  <div className="grid grid-cols-2 gap-2 border-b border-slate-100 pb-3">
+                  <div className="grid grid-cols-3 gap-2 border-b border-slate-100 pb-3">
                     <div>
                       <span className="text-slate-400 block text-[10px] uppercase tracking-wider">Supplier Name</span>
-                      <span className="font-semibold text-slate-800">{invoice.supplierName}</span>
+                      <span className="font-semibold text-slate-800 truncate block">{invoice.supplierName}</span>
                     </div>
                     <div>
                       <span className="text-slate-400 block text-[10px] uppercase tracking-wider">Invoice Date</span>
                       <span className="font-mono text-slate-800">{invoice.invoiceDate}</span>
+                    </div>
+                    <div>
+                      <span className="text-emerald-700 block text-[10px] uppercase tracking-wider font-semibold">Payment Due Date</span>
+                      <span className="font-mono font-bold text-emerald-900">
+                        {invoice.dueDate || new Date(new Date(invoice.invoiceDate).getTime() + 30*24*60*60*1000).toISOString().split('T')[0]}
+                      </span>
                     </div>
                   </div>
 
@@ -2840,6 +2934,30 @@ Tel: +65 6748 1122`;
                       {actionStatus === 'REVIEW_SENT' ? 'Sent for Review ✓' : 'Send for Review'}
                     </button>
                   </div>
+
+                  {/* Post-Approval Google Sheets Export Action Card */}
+                  {actionStatus === 'APPROVED' && (
+                    <div className="mt-3 p-3 bg-emerald-50 border border-emerald-300 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs animate-fade-in shadow-xs">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5 font-bold text-emerald-950">
+                          <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>Approved Payment Logged</span>
+                        </div>
+                        <p className="text-[11px] text-emerald-800">
+                          Payment Due Date: <strong className="font-mono text-emerald-950">{
+                            invoice.dueDate || new Date(new Date(invoice.invoiceDate).getTime() + 30*24*60*60*1000).toISOString().split('T')[0]
+                          }</strong>
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setShowGoogleSheetsModal(true)}
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-3.5 rounded-lg shadow-sm flex items-center gap-1.5 text-xs transition-colors shrink-0"
+                      >
+                        <FileSpreadsheet className="w-4 h-4" />
+                        <span>Export to Google Sheets</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -3356,6 +3474,17 @@ Tel: +65 6748 1122`;
           </div>
         </div>
       )}
+
+      {/* MODAL: GOOGLE SHEETS SYNC & EXPORT */}
+      <GoogleSheetsModal
+        isOpen={showGoogleSheetsModal}
+        onClose={() => setShowGoogleSheetsModal(false)}
+        onImportInvoices={handleGoogleSheetsImport}
+        exportData={{
+          auditedInvoices,
+          actionTimestamp: actionTimestamp || new Date().toLocaleString('en-SG')
+        }}
+      />
 
     </div>
   );

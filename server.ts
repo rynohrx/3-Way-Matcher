@@ -216,13 +216,14 @@ app.post("/api/extract", async (req, res) => {
       if (docType === "invoice") {
         promptText = `You are an expert accounts assistant for Boon Huat Hardware & Supplies Pte Ltd.
 Analyze this invoice and extract the details. It may be a PDF, scanned document, or handwritten slip.
-If fields like PO Number are not present, leave them blank. Ensure date formats are in YYYY-MM-DD format.`;
+If fields like PO Number are not present, leave them blank. Ensure date formats are in YYYY-MM-DD format. Extract payment due date if specified on the invoice.`;
         
         schema = {
           type: Type.OBJECT,
           properties: {
             id: { type: Type.STRING, description: "The invoice number or invoice ID (e.g. INV-1234)" },
             invoiceDate: { type: Type.STRING, description: "The date of the invoice in YYYY-MM-DD format" },
+            dueDate: { type: Type.STRING, description: "The payment due date specified on the supplier invoice in YYYY-MM-DD format (if present)" },
             supplierName: { type: Type.STRING, description: "The name of the vendor/supplier" },
             poNumber: { type: Type.STRING, description: "The purchase order number referenced, if any (e.g. PO-2026-1001)" },
             itemDescription: { type: Type.STRING, description: "Brief description of the main items billed" },
@@ -299,9 +300,12 @@ If fields like PO Number are not present, leave them blank. Ensure date formats 
       const existingPo = db.purchaseOrders[0] || null;
 
       if (docType === "invoice") {
+        const todayStr = new Date().toISOString().split("T")[0];
+        const defaultDueStr = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
         mockData = {
           id: `INV-${Math.floor(10000 + Math.random() * 90000)}`,
-          invoiceDate: new Date().toISOString().split("T")[0],
+          invoiceDate: todayStr,
+          dueDate: defaultDueStr,
           supplierName: (existingPo && existingPo.supplierName && isNaN(Number(existingPo.supplierName.trim()))) ? existingPo.supplierName : "Lian Seng Hardware Supplies Pte Ltd",
           poNumber: existingPo ? existingPo.id : "PO-2026-1001",
           itemDescription: existingPo ? existingPo.itemDescription : (fileClean || "Industrial Hardware Supplies"),
