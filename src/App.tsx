@@ -868,7 +868,11 @@ Singapore`;
           const buffer = await file.arrayBuffer();
           const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
 
-          workbook.SheetNames.forEach(sheetName => {
+          // Find "Approved Invoices" sheet tab if present
+          const approvedSheet = workbook.SheetNames.find(s => s.trim().toLowerCase().includes('approved'));
+          const sheetNamesToRead = approvedSheet ? [approvedSheet] : workbook.SheetNames;
+
+          sheetNamesToRead.forEach(sheetName => {
             const sheet = workbook.Sheets[sheetName];
             const parsedInvs = parseInvoicesFromExcelSheet(sheet);
             parsedInvs.forEach(inv => {

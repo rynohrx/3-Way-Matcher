@@ -135,7 +135,7 @@ export async function createGoogleSheet(
       sheets: [
         {
           properties: {
-            title: 'Audit Report',
+            title: 'Approved Invoices',
           },
           data: [
             {

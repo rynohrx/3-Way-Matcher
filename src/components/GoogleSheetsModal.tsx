@@ -182,9 +182,24 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
       const info = await getSpreadsheetDetails(currentToken, id);
       setSelectedSpreadsheet(info);
       if (info.sheets.length > 0) {
-        const firstTab = info.sheets[0].title;
-        setSelectedTabTitle(firstTab);
-        fetchTabValues(currentToken, id, firstTab);
+        // Look for tab named "Approved Invoices" (case insensitive)
+        const approvedTab = info.sheets.find(s =>
+          s.title.trim().toLowerCase().includes('approved')
+        );
+
+        if (approvedTab) {
+          setSelectedTabTitle(approvedTab.title);
+          fetchTabValues(currentToken, id, approvedTab.title);
+        } else {
+          // If no 'Approved Invoices' tab found, select the first tab but notify user of restriction
+          const firstTab = info.sheets[0].title;
+          setSelectedTabTitle(firstTab);
+          fetchTabValues(currentToken, id, firstTab);
+          setStatusMsg({
+            type: 'error',
+            text: `Notice: No "Approved Invoices" tab found in "${info.title}". Imports are restricted to reading ONLY from an "Approved Invoices" sheet tab.`
+          });
+        }
       }
     } catch (err: any) {
       console.error('Error getting sheet details:', err);
@@ -196,13 +211,19 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
   const fetchTabValues = async (authToken: string, spreadsheetId: string, tabName: string) => {
     setLoadingValues(true);
+    const isApprovedTab = tabName.trim().toLowerCase().includes('approved');
     try {
       const rows = await getSpreadsheetValues(authToken, spreadsheetId, tabName);
       setPreviewRows(rows);
-      if (rows.length === 0) {
-        setStatusMsg({ type: 'info', text: 'Selected sheet tab is empty.' });
+      if (!isApprovedTab) {
+        setStatusMsg({
+          type: 'error',
+          text: `Restricted Tab: Selected tab "${tabName}" is not an "Approved Invoices" tab. Data can ONLY be imported from an "Approved Invoices" tab.`
+        });
+      } else if (rows.length === 0) {
+        setStatusMsg({ type: 'info', text: 'Selected "Approved Invoices" tab is empty.' });
       } else {
-        setStatusMsg({ type: 'success', text: `Loaded ${rows.length} rows from tab "${tabName}".` });
+        setStatusMsg({ type: 'success', text: `Loaded ${rows.length} invoice rows from "Approved Invoices" tab (${tabName}).` });
       }
     } catch (err: any) {
       console.error('Error fetching sheet rows:', err);
@@ -221,8 +242,17 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
   };
 
   const handleExecuteImport = () => {
+    const isApprovedTab = selectedTabTitle.trim().toLowerCase().includes('approved');
+    if (!isApprovedTab) {
+      setStatusMsg({
+        type: 'error',
+        text: 'Import Restricted: Invoice data can ONLY be read from the "Approved Invoices" sheet/tab. Please select an "Approved Invoices" sheet tab.'
+      });
+      return;
+    }
+
     if (previewRows.length === 0) {
-      setStatusMsg({ type: 'error', text: 'No rows available to import.' });
+      setStatusMsg({ type: 'error', text: 'No invoice rows available to import in "Approved Invoices" tab.' });
       return;
     }
     const fileName = selectedSpreadsheet
@@ -628,16 +658,37 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                         <select
                           value={selectedTabTitle}
                           onChange={(e) => handleTabChange(e.target.value)}
-                          className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-emerald-300 font-semibold focus:outline-hidden"
+                          className={`border rounded-lg px-2.5 py-1 text-xs font-semibold focus:outline-hidden ${
+                            selectedTabTitle.trim().toLowerCase().includes('approved')
+                              ? 'bg-slate-900 border-emerald-500 text-emerald-300'
+                              : 'bg-slate-900 border-amber-500/80 text-amber-300'
+                          }`}
                         >
                           {selectedSpreadsheet.sheets.map((tab) => (
                             <option key={tab.sheetId} value={tab.title}>
-                              {tab.title}
+                              {tab.title} {tab.title.trim().toLowerCase().includes('approved') ? '✓ (Approved)' : ''}
                             </option>
                           ))}
                         </select>
                       </div>
                     </div>
+
+                    {/* Tab Enforcement Banner */}
+                    {!selectedTabTitle.trim().toLowerCase().includes('approved') ? (
+                      <div className="bg-amber-950/80 border border-amber-600/80 p-2.5 rounded-lg text-xs text-amber-200 flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>
+                          <strong>Import Restricted:</strong> Invoice data can ONLY be read from an <strong>"Approved Invoices"</strong> sheet tab. Selected tab "<em>{selectedTabTitle}</em>" is restricted.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="bg-emerald-950/40 border border-emerald-800/60 p-2 rounded-lg text-[11px] text-emerald-300 flex items-center gap-2">
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>
+                          Reading verified invoice dataset from <strong>"Approved Invoices"</strong> sheet tab ({selectedTabTitle}).
+                        </span>
+                      </div>
+                    )}
 
                     {/* Preview Table */}
                     <div className="flex-1 border border-slate-700 rounded-lg overflow-hidden bg-slate-950 flex flex-col min-h-[260px]">
@@ -688,10 +739,17 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                     <div className="pt-2 flex justify-end">
                       <button
                         onClick={handleExecuteImport}
-                        disabled={previewRows.length === 0}
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-5 py-2.5 rounded-lg text-xs shadow-lg flex items-center gap-2 transition-all disabled:opacity-50"
+                        disabled={previewRows.length === 0 || !selectedTabTitle.trim().toLowerCase().includes('approved')}
+                        className={`font-bold px-5 py-2.5 rounded-lg text-xs shadow-lg flex items-center gap-2 transition-all disabled:opacity-50 ${
+                          selectedTabTitle.trim().toLowerCase().includes('approved')
+                            ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                            : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                        }`}
                       >
-                        <ArrowRight className="w-4 h-4" /> Import & Run 3-Way Match Audit
+                        <ArrowRight className="w-4 h-4" />
+                        {!selectedTabTitle.trim().toLowerCase().includes('approved')
+                          ? 'Select "Approved Invoices" Tab to Import'
+                          : 'Import Invoices from Approved Tab'}
                       </button>
                     </div>
                   </div>
